@@ -11,6 +11,8 @@ engine = create_engine(
     settings.database_url,
     echo=False, #settings.debug,
     pool_pre_ping=True,
+    # Esto asegura que el driver pase los parámetros correctos al conectar
+    connect_args={"sslmode": "require"}
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
