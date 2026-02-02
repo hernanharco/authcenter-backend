@@ -28,3 +28,14 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 # pip freeze > requirements.txt
 # docker build -t authcore-backend .
 # docker run -p 8000:8000 --env-file .env authcore-backend
+
+# Dale permisos primero si no los tiene
+# chmod +x nombre_de_tu_script.sh
+
+# EJECUCIÓN EN PRODUCCIÓN
+# ./nombre_de_tu_script.sh production
+
+#para eliminar contenedor y imagen
+#docker stop authcore-backend
+#docker rm authcore-backend
+#docker rmi authcore-backend

@@ -1,40 +1,59 @@
 """
 Authentication endpoints.
-Maneja login local, login con Google y gestión de sesiones.
+Maneja login local, login con Google y gestión de sesiones mediante Cookies httpOnly.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 
-# 1. Librerías de Google para el flujo seguro
+# 1. Librerías de Google
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 from google_auth_oauthlib.flow import Flow
 
-# 2. Imports locales del proyecto
+# 2. Imports locales
 from app.core.settings import settings
 from app.db.session import get_db
 from app.models.user import User, UserStatus, UserRole
-from app.schemas.user import UserLogin, UserLoginResponse, GoogleLogin # <--- Asegúrate que GoogleLogin esté en schemas
+from app.schemas.user import UserLogin, UserLoginResponse, GoogleLogin
 from app.core.security import (
     verify_password,
-    create_access_token,
-    get_current_user
+    create_access_token
 )
 
 router = APIRouter()
 
+def set_auth_cookie(response: Response, access_token: str):
+    """
+    Función auxiliar para configurar la cookie de forma dinámica.
+    Implementa seguridad por defecto según el entorno.
+    """
+    is_prod = settings.ENVIRONMENT == "production"
+    
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        # En prod requiere HTTPS (Secure=True). En local False.
+        secure=is_prod,
+        # En prod 'none' permite cross-site (Vercel -> Render)
+        samesite="lax" if not is_prod else "none",
+        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        path="/",
+    )
+
 @router.post("/login", response_model=UserLoginResponse)
 async def login(
+    response: Response,
     *,
     db: Session = Depends(get_db),
     user_data: UserLogin
 ) -> Any:
-    """Login tradicional vía JSON."""
+    """Login tradicional vía JSON que planta una cookie."""
     user = db.query(User).filter(
         or_(User.username == user_data.username, User.email == user_data.username)
     ).first()
@@ -49,6 +68,10 @@ async def login(
     db.commit()
     
     access_token = create_access_token(subject=user.id)
+    
+    # Seteamos la cookie de seguridad
+    set_auth_cookie(response, access_token)
+    
     return {
         "access_token": access_token,
         "token_type": "bearer",
@@ -58,21 +81,13 @@ async def login(
 
 @router.post("/google", response_model=UserLoginResponse)
 async def google_login(
+    response: Response,
     *,
     db: Session = Depends(get_db),
     data: GoogleLogin
 ) -> Any:
-    """
-    CANJE DE CÓDIGO (Auth Code Flow):
-    El frontend envía un 'code'. El backend lo canjea por tokens
-    usando el CLIENT_SECRET que solo nosotros conocemos.
-    """
+    """Canje de código Google y creación de sesión segura vía Cookie."""
     try:
-        # A. Configurar el flujo de intercambio con Google
-        # El redirect_uri 'postmessage' es obligatorio cuando usas el popup de React
-        # print(f"DEBUG: Usando ID {settings.GOOGLE_CLIENT_ID[:10]}...") 
-        # print(f"DEBUG: Usando Secret {settings.GOOGLE_CLIENT_SECRET[:5]}...")
-
         flow = Flow.from_client_config(
             client_config={
                 "web": {
@@ -90,13 +105,9 @@ async def google_login(
             redirect_uri='postmessage'
         )
 
-        # B. Intercambiar el código por tokens reales
-        # 'data.token' ahora contiene el 'code' que mandó el frontend
         flow.fetch_token(code=data.token)
         credentials = flow.credentials
 
-        # C. Verificar la identidad con el ID Token
-        # Esto asegura que el token no ha sido manipulado
         request = google_requests.Request()
         id_info = id_token.verify_oauth2_token(
             credentials.id_token, 
@@ -106,13 +117,11 @@ async def google_login(
 
         email = id_info.get("email")
         if not email:
-            raise HTTPException(status_code=400, detail="El token de Google no contiene email")
+            raise HTTPException(status_code=400, detail="Token sin email")
 
-        # D. Lógica de Persistencia en Neon (Modular)
         user = db.query(User).filter(User.email == email).first()
         
         if not user:
-            # Creamos el usuario si no existe (Fricción Cero)
             username_suggested = email.split("@")[0]
             user = User(
                 username=username_suggested,
@@ -127,11 +136,13 @@ async def google_login(
             db.commit()
             db.refresh(user)
 
-        # E. Generar nuestra propia sesión (JWT local)
         user.last_login = datetime.utcnow()
         db.commit()
         
         access_token = create_access_token(subject=user.id)
+        
+        # Seteamos la cookie de seguridad
+        set_auth_cookie(response, access_token)
         
         return {
             "access_token": access_token,
@@ -141,30 +152,42 @@ async def google_login(
         }
 
     except Exception as e:
-        # Importante: En producción no des detalles del error, pero aquí nos sirve para aprender
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, 
             detail=f"Error en validación segura: {str(e)}"
         )
+
+@router.post("/logout")
+async def logout(response: Response):
+    """Borra la cookie de sesión del navegador."""
+    is_prod = settings.ENVIRONMENT == "production"
     
+    response.delete_cookie(
+        key="access_token",
+        path="/",
+        httponly=True,
+        secure=is_prod,
+        samesite="lax" if not is_prod else "none"
+    )
+    return {"message": "Sesión cerrada correctamente"}
+
 @router.post("/login-form", response_model=UserLoginResponse)
 async def login_form(
+    response: Response,
     db: Session = Depends(get_db),
     form_data: OAuth2PasswordRequestForm = Depends()
 ) -> Any:
-    """Login para Swagger UI."""
+    """Login para Swagger UI con soporte de cookies."""
     user = db.query(User).filter(User.username == form_data.username).first()
     if not user or not verify_password(form_data.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Credenciales incorrectas")
     
     access_token = create_access_token(subject=user.id)
+    set_auth_cookie(response, access_token)
+    
     return {
         "access_token": access_token,
         "token_type": "bearer",
         "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         "user": user
     }
-
-@router.post("/logout")
-async def logout():
-    return {"message": "Sesión cerrada correctamente"}

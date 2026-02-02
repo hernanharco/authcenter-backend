@@ -6,16 +6,16 @@ import uvicorn
 
 from app.core.settings import settings
 from app.db.session import get_db, create_tables
-from app.api.v1.api import api_router
+from app.api.v1.api_route import api_router
 
 # 1. Definimos el ciclo de vida (Lifespan)
 # Este reemplaza a @app.on_event("startup")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print(f"🚀 Starting FastAPI app in {settings.environment} mode")
+    print(f"🚀 Starting FastAPI app in {settings.ENVIRONMENT} mode")
     
-    # En lugar de imprimir settings.database_url completo:
-    if settings.database_url:
+    # En lugar de imprimir settings.DATABASE_URL completo:
+    if settings.DATABASE_URL:
         print("🔗 Database URL: Configurada correctamente (Oculta por seguridad)")
     else:
         print("🔗 Database URL: No encontrada o incorrecta")
@@ -45,7 +45,7 @@ app = FastAPI(
     title="AuthCore API",
     description="FastAPI application with Neon PostgreSQL integration",
     version="1.0.0",
-    debug=settings.debug,
+    debug=settings.DEBUG,
     lifespan=lifespan
 )
 
@@ -53,9 +53,13 @@ app = FastAPI(
 # Ahora toma la lista procesada desde tu Settings
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.allow_origins,
+    # 1. Usamos la propiedad que calcula la lista de dominios
+    allow_origins=settings.allow_origins, 
     allow_credentials=True,
-    allow_methods=["*"] if settings.is_development else ["GET", "POST", "PUT", "DELETE"],
+    # 2. Simplificamos la lógica de métodos
+    # Si no es producción (es decir, desarrollo), permitimos todo "*"
+    # Si es producción, limitamos a los métodos estándar
+    allow_methods=["*"] if not settings.is_production else ["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
 )
 
@@ -66,8 +70,8 @@ app.include_router(api_router, prefix=settings.API_V1_STR)
 async def root():
     return {
         "message": "AuthCore API is running",
-        "environment": settings.environment,
-        "debug": settings.debug
+        "environment": settings.ENVIRONMENT,
+        "debug": settings.DEBUG
     }
 
 @app.get("/health")
@@ -80,13 +84,13 @@ async def health_check(db: Session = Depends(get_db)):
         db.execute(text("SELECT 1"))
         return {
             "status": "healthy",
-            "environment": settings.environment,
+            "environment": settings.ENVIRONMENT,
             "database": "connected"
         }
     except Exception as e:
         return {
             "status": "unhealthy",
-            "environment": settings.environment,
+            "environment": settings.ENVIRONMENT,
             "database": "disconnected",
             "error": str(e)
         }
@@ -96,8 +100,8 @@ async def app_info():
     return {
         "app_name": "AuthCore API",
         "version": "1.0.0",
-        "environment": settings.environment,
-        "debug": settings.debug,
+        "environment": settings.ENVIRONMENT,
+        "debug": settings.DEBUG,
         "is_production": settings.is_production,
         "is_development": settings.is_development
     }

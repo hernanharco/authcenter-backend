@@ -6,17 +6,34 @@ import bcrypt
 from datetime import datetime, timedelta
 from typing import Any, Union, Optional
 from jose import JWTError, jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
 from app.core.settings import settings
 from app.db.session import get_db
-from app.models.user import User, UserRole # Importamos UserRole aquí
+from app.models.user import User, UserRole
 
-# CORRECCIÓN: Usamos el nombre en MAYÚSCULAS para coincidir con tus settings
-# Si en tu settings.py se llama api_v1_str, cámbialo a minúsculas.
-oauth2_scheme = OAuth2PasswordBearer(
+# --- CLASE PERSONALIZADA PARA COOKIES ---
+
+class OAuth2PasswordBearerWithCookie(OAuth2PasswordBearer):
+    """
+    Clase que busca el token primero en las Cookies (httpOnly) 
+    y luego en el Header de Authorization como respaldo.
+    """
+    async def __call__(self, request: Request) -> Optional[str]:
+        # 1. Intentamos obtener el token de la cookie 'access_token'
+        token: str = request.cookies.get("access_token")
+        
+        # 2. Si no hay cookie, usamos la lógica original (Header Authorization)
+        if not token:
+            # Esto permite que Swagger y Postman sigan funcionando
+            token = await super().__call__(request)
+            
+        return token
+
+# Instanciamos nuestro nuevo esquema de seguridad
+oauth2_scheme = OAuth2PasswordBearerWithCookie(
     tokenUrl=f"{settings.API_V1_STR}/auth/login-form"
 )
 
@@ -67,7 +84,7 @@ def get_current_user(
 ) -> User:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="No se pudieron validar las credenciales",
+        detail="No se pudieron validar las credenciales o la sesión ha expirado",
         headers={"WWW-Authenticate": "Bearer"},
     )
     
@@ -106,9 +123,6 @@ def get_current_active_user(
 def get_current_admin_user(
     current_user: User = Depends(get_current_active_user)
 ) -> User:
-    """
-    CORRECCIÓN: Verificamos por el Enum UserRole para ser más estrictos
-    """
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
