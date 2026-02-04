@@ -77,20 +77,22 @@ async def root():
 @app.get("/health")
 async def health_check(db: Session = Depends(get_db)):
     """
-    Endpoint de salud que verifica la conexión real a Neon
+    Endpoint de salud que verifica la conexión real a Neon de authCore
     """
     try:
         from sqlalchemy import text # Importante para SQLAlchemy 2.0
         db.execute(text("SELECT 1"))
         return {
-            "status": "healthy",
+            "status": "healthy" + " " + settings.TITLE_BACKEND,
             "environment": settings.ENVIRONMENT,
+            "db_provider": settings.NAME_DATABASE,
             "database": "connected"
         }
     except Exception as e:
         return {
-            "status": "unhealthy",
+            "status": "unhealthy" + " " + settings.TITLE_BACKEND,
             "environment": settings.ENVIRONMENT,
+            "db_provider": settings.NAME_DATABASE,
             "database": "disconnected",
             "error": str(e)
         }
@@ -98,7 +100,7 @@ async def health_check(db: Session = Depends(get_db)):
 @app.get("/info")
 async def app_info():
     return {
-        "app_name": "AuthCore API",
+        "app_name": settings.TITLE_BACKEND,
         "version": "1.0.0",
         "environment": settings.ENVIRONMENT,
         "debug": settings.DEBUG,

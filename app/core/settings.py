@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     # --- Entorno y Debug ---
     ENVIRONMENT: str = "development"
     DEBUG: bool = True
+
+    # Title for the backend:
+    TITLE_BACKEND: str = "Default API Title" # Valor por defecto si no existe en .env
+    NAME_DATABASE: str = "Default Database Name" # Valor por defecto si no existe en .env
     
     # --- Base de Datos ---
     # Usamos una sola variable genérica. El .env o Docker deciden el valor.
